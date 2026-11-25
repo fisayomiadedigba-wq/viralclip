@@ -9,7 +9,7 @@ import { auth, db, firebaseReady } from './firebase'
 type Page = 'feed' | 'me' | 'creator' | 'notifications' | 'upload' | 'settings' | 'admin' | 'info' | 'signin' | 'signup' | 'edit-profile' | 'terms' | 'privacy' | 'about' | 'contact'
 type IconName = 'user' | 'bell' | 'plus' | 'heart' | 'comment' | 'share' | 'save' | 'flag' | 'back' | 'settings' | 'trash' | 'play' | 'more' | 'check' | 'chart' | 'shield' | 'users' | 'video' | 'edit'
 type Creator = { id: string; name: string; username: string; bio?: string; avatar?: string; followers?: number; following?: number; posts?: number; status?: string }
-type Clip = { id: string; ownerId: string; creator: Creator; caption: string; videoUrl?: string; posterUrl?: string; likes: number; comments: number; shares: number; createdAt?: unknown }
+type Clip = { id: string; ownerId: string; creator: Creator; caption: string; videoUrl?: string; posterUrl?: string; likes: number; comments: number; shares: number; views?: number; createdAt?: unknown }
 type Notice = { id: string; userId?: string; actorId?: string; actorName?: string; text: string; type?: string; createdAt?: { toDate?: () => Date } }
 type Report = { id: string; clipId?: string; ownerId?: string; creatorName?: string; reason?: string; status?: string; createdAt?: unknown }
 
@@ -43,7 +43,7 @@ const compact = (n = 0) => n > 999999 ? `${(n / 1e6).toFixed(1)}M` : n > 999 ? `
 const placeholderCreator: Creator = { id: 'placeholder', name: 'Your name', username: 'username', bio: 'Your bio will appear here.', followers: 0, following: 0, posts: 0 }
 
 export default function App() {
-  const [page, setPage] = useState<Page>(() => window.location.pathname === '/admin' ? 'admin' : 'signin')
+  const [page, setPage] = useState<Page>(() => window.location.pathname === '/admin' ? 'admin' : 'feed')
   const [user, setUser] = useState<User | null>(null)
   const [clips, setClips] = useState<Clip[]>([])
   const [notices, setNotices] = useState<Notice[]>([])
@@ -135,11 +135,11 @@ export default function App() {
   }, [db, user])
 
   const openCreator = (creator: Creator) => { 
-    if (!user) { setPage('signin'); return }
+    if (!user) { setToast('Sign in to view profiles.'); return }
     setSelected(creator); setPage(creator.id === user.uid ? 'me' : 'creator') 
   }
   const toggleFollow = async (creator: Creator) => {
-    if (!user || !db || creator.id === 'placeholder') { setToast('Sign in to follow creators.'); return }
+    if (!user || !db || creator.id === 'placeholder') { setPage('signin'); return }
     if (creator.id === user.uid) { setToast('You cannot follow yourself.'); return }
     const isFollowing = following.includes(creator.id)
     setFollowing(v => isFollowing ? v.filter(id => id !== creator.id) : [...v, creator.id])
@@ -156,7 +156,7 @@ export default function App() {
     }
   }
   const toggleLike = async (clip: Clip) => {
-    if (!user || !db) { setToast('Sign in to like clips.'); return }
+    if (!user || !db) { setPage('signin'); return }
     const isLiked = likes.includes(clip.id)
     setLikes(v => isLiked ? v.filter(id => id !== clip.id) : [...v, clip.id])
     const likeRef = doc(db, 'users', user.uid, 'likedClips', clip.id)
@@ -178,11 +178,13 @@ export default function App() {
     }
   }
   const submitReport = async (reason: string) => {
+    if (!user) { setPage('signin'); return }
     if (db && reportClip) await addDoc(collection(db, 'reports'), { clipId: reportClip.id, ownerId: reportClip.ownerId, creatorName: reportClip.creator.name, reason, status: 'open', reporterId: user?.uid, createdAt: serverTimestamp() })
     setReportClip(null); setToast('Report sent to the moderation team.')
   }
   const submitComment = async (e: FormEvent) => {
     e.preventDefault(); if (!comment.trim() || !commentsClip) return
+    if (!user) { setPage('signin'); return }
     const row = { text: comment.trim(), user: currentUserData?.name || 'You', userId: user?.uid, parentId: reply ?? undefined }
     setComment(''); setReply(null)
     if (db) {
@@ -274,7 +276,7 @@ export default function App() {
   if (page === 'signin') return <Shell title="Sign in" back={() => setPage('signin')}><SignIn onSignIn={() => setPage('feed')} onSignUp={() => setPage('signup')}/></Shell>
   if (page === 'signup') return <Shell title="Sign up" back={() => setPage('signin')}><SignUp onSignUp={() => setPage('feed')}/></Shell>
 
-  return <main className="h-[100dvh] snap-y snap-mandatory overflow-y-auto bg-black text-white">
+  return <main className="h-[100dvh] overflow-y-scroll bg-black text-white scroll-smooth">
     <header className="pointer-events-none fixed inset-x-0 top-0 z-30 mx-auto flex h-20 max-w-[540px] items-center justify-between px-5">
       <strong className="text-xl font-black tracking-[.18em]">CLIPS<span className="text-lime">.</span></strong>
       <div className="pointer-events-auto flex gap-2"><Circle label="Post" icon="plus" click={() => user ? setPage('upload') : setPage('signin')}/><Circle label="Notifications" icon="bell" click={() => user ? setPage('notifications') : setPage('signin')} badge={notices.length > 0}/><Circle label="Profile" icon="user" click={() => user ? setPage('me') : setPage('signin')}/></div>
@@ -360,7 +362,18 @@ function Upload({ user, onDone, userData }: { user: User; onDone: () => void; us
 
 function Admin({ clips, reports, notices, toast }: { clips: Clip[]; reports: Report[]; notices: Notice[]; toast: (s: string) => void }) {
   const [tab, setTab] = useState<'overview'|'reports'|'users'>('overview')
+  const [totalUsers, setTotalUsers] = useState(0)
+  const [searchQuery, setSearchQuery] = useState('')
   const users = new Map(clips.map(c => [c.ownerId, c.creator]))
+  const totalViews = clips.reduce((sum, clip) => sum + (clip.views || 0), 0)
+
+  useEffect(() => {
+    if (!db) return
+    const stop = onSnapshot(collection(db, 'users'), snap => {
+      setTotalUsers(snap.size)
+    })
+    return stop
+  }, [db])
   const moderate = async (r: Report, action: 'warn'|'ban'|'delete'|'dismiss') => {
     if (!db) { toast('Connect Firebase to perform moderation actions.'); return }
     if (action === 'warn' && r.ownerId) await addDoc(collection(db, 'users', r.ownerId, 'notifications'), { type: 'admin', actorName: 'CLIPS Admin', text: 'sent you a warning about content that may break our community rules.', createdAt: serverTimestamp() })
@@ -368,13 +381,13 @@ function Admin({ clips, reports, notices, toast }: { clips: Clip[]; reports: Rep
     if (action === 'delete' && r.clipId) await deleteDoc(doc(db, 'clips', r.clipId))
     await updateDoc(doc(db, 'reports', r.id), { status: action === 'dismiss' ? 'dismissed' : 'actioned', action, reviewedAt: serverTimestamp() }); toast(`Report ${action === 'dismiss' ? 'dismissed' : 'actioned'}.`)
   }
-  return <div className="p-5"><div className="rounded-3xl bg-[#171717] p-6 text-white"><span className="text-xs font-bold uppercase tracking-widest text-lime">Live overview</span><h2 className="mt-2 text-3xl font-black">Community health</h2><div className="mt-6 grid grid-cols-3 gap-2">{[[users.size,'Users'],[clips.length,'Clips'],[reports.filter(r => r.status !== 'dismissed' && r.status !== 'actioned').length,'Open reports']].map(([n,l]) => <div key={String(l)} className="rounded-2xl bg-white/10 p-3"><b className="text-xl">{n}</b><span className="mt-1 block text-xs text-white/50">{l}</span></div>)}</div></div><div role="tablist" className="mt-6 flex gap-2 rounded-full bg-black/5 p-1">{(['overview','reports','users'] as const).map(t => <button role="tab" aria-selected={tab === t} key={t} onClick={() => setTab(t)} className={`h-11 flex-1 rounded-full text-sm font-bold capitalize ${tab === t ? 'bg-black text-white' : ''}`}>{t}</button>)}</div>{tab === 'overview' && <div className="mt-5 grid gap-3 sm:grid-cols-2"><Stat icon="chart" title="Engagement" value={compact(clips.reduce((n,c) => n + c.likes + c.comments + c.shares, 0))}/><Stat icon="bell" title="Notifications" value={compact(notices.length)}/><Stat icon="shield" title="Resolution rate" value={`${reports.length ? Math.round(reports.filter(r => r.status === 'actioned' || r.status === 'dismissed').length / reports.length * 100) : 0}%`}/><Stat icon="video" title="Published clips" value={String(clips.length)}/></div>}{tab === 'reports' && <div className="mt-5 space-y-3">{reports.length === 0 && <Empty text="No reports to review."/>}{reports.map(r => <div key={r.id} className="rounded-2xl bg-white p-4"><div className="flex justify-between gap-3"><div><b>{r.reason || 'Content report'}</b><p className="mt-1 text-xs text-black/45">{r.creatorName || 'Unknown creator'} · {r.status || 'open'}</p></div><Icon name="flag"/></div><div className="mt-4 grid grid-cols-4 gap-1">{(['warn','ban','delete','dismiss'] as const).map(a => <button key={a} onClick={() => moderate(r,a)} className={`min-h-11 rounded-xl text-xs font-bold capitalize ${a === 'delete' || a === 'ban' ? 'bg-red-50 text-red-700' : 'bg-black/5'}`}>{a}</button>)}</div></div>)}</div>}{tab === 'users' && <div className="mt-5">{[...users.values()].map(u => <div key={u.id} className="flex min-h-16 items-center gap-3 border-b border-black/10"><span className="grid h-10 w-10 place-items-center rounded-full bg-lime text-sm font-black">{u.name.slice(0,2).toUpperCase()}</span><div className="flex-1"><b className="text-sm">{u.name}</b><p className="text-xs text-black/45">@{u.username}</p></div><span className="rounded-full bg-green-50 px-3 py-1 text-xs font-bold text-green-700">{u.status || 'active'}</span></div>)}</div>}</div>
+  return <div className="p-5"><div className="rounded-3xl bg-[#171717] p-6 text-white"><span className="text-xs font-bold uppercase tracking-widest text-lime">Live overview</span><h2 className="mt-2 text-3xl font-black">Community health</h2><div className="mt-6 grid grid-cols-3 gap-2">{[[totalUsers,'Total Sign ups'],[clips.length,'Clips'],[reports.filter(r => r.status !== 'dismissed' && r.status !== 'actioned').length,'Open reports']].map(([n,l]) => <div key={String(l)} className="rounded-2xl bg-white/10 p-3"><b className="text-xl">{n}</b><span className="mt-1 block text-xs text-white/50">{l}</span></div>)}</div></div><div role="tablist" className="mt-6 flex gap-2 rounded-full bg-black/5 p-1">{(['overview','reports','users'] as const).map(t => <button role="tab" aria-selected={tab === t} key={t} onClick={() => setTab(t)} className={`h-11 flex-1 rounded-full text-sm font-bold capitalize ${tab === t ? 'bg-black text-white' : ''}`}>{t}</button>)}</div>{tab === 'overview' && <div className="mt-5 grid gap-3 sm:grid-cols-2"><Stat icon="chart" title="Total Views" value={compact(totalViews)}/><Stat icon="users" title="Total Sign ups" value={compact(totalUsers)}/><Stat icon="video" title="Published clips" value={String(clips.length)}/><Stat icon="bell" title="Notifications" value={compact(notices.length)}/></div>}{tab === 'reports' && <div className="mt-5 space-y-3">{reports.length === 0 && <Empty text="No reports to review."/>}{reports.map(r => <div key={r.id} className="rounded-2xl bg-white p-4"><div className="flex justify-between gap-3"><div><b>{r.reason || 'Content report'}</b><p className="mt-1 text-xs text-black/45">{r.creatorName || 'Unknown creator'} · {r.status || 'open'}</p></div><Icon name="flag"/></div><div className="mt-4 grid grid-cols-4 gap-1">{(['warn','ban','delete','dismiss'] as const).map(a => <button key={a} onClick={() => moderate(r,a)} className={`min-h-11 rounded-xl text-xs font-bold capitalize ${a === 'delete' || a === 'ban' ? 'bg-red-50 text-red-700' : 'bg-black/5'}`}>{a}</button>)}</div></div>)}</div>}{tab === 'users' && <div className="mt-5 space-y-3"><input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search clips by caption or creator..." className="w-full rounded-2xl bg-white p-4 outline-none focus:ring-2 focus:ring-black"/>{clips.filter(c => !searchQuery || c.caption?.toLowerCase().includes(searchQuery.toLowerCase()) || c.creator.name?.toLowerCase().includes(searchQuery.toLowerCase())).map(c => <div key={c.id} className="rounded-2xl bg-white p-4"><div className="flex justify-between gap-3"><div><b>{c.creator.name}</b><p className="mt-1 text-xs text-black/45">{c.caption || 'No caption'} · {compact(c.views || 0)} views</p></div><Icon name="video"/></div></div>)}</div>}{tab === 'users' && <div className="mt-5">{[...users.values()].map(u => <div key={u.id} className="flex min-h-16 items-center gap-3 border-b border-black/10"><span className="grid h-10 w-10 place-items-center rounded-full bg-lime text-sm font-black">{u.name.slice(0,2).toUpperCase()}</span><div className="flex-1"><b className="text-sm">{u.name}</b><p className="text-xs text-black/45">@{u.username}</p></div><span className="rounded-full bg-green-50 px-3 py-1 text-xs font-bold text-green-700">{u.status || 'active'}</span></div>)}</div>}</div>
 }
 
 function Shell({ title, back, action, children }: { title: string; back: () => void; action?: ReactNode; children: ReactNode }) { return <main className="min-h-[100dvh] bg-[#f3f2ee] text-[#111]"><header className="sticky top-0 z-30 mx-auto flex h-16 max-w-[640px] items-center justify-between border-b border-black/10 bg-[#f3f2ee]/95 px-4 backdrop-blur"><button className="icon-btn dark" onClick={back} aria-label="Go back"><Icon name="back"/></button><h1 className="font-black">{title}</h1><div className="grid h-11 w-11 place-items-center">{action}</div></header><div className="mx-auto max-w-[640px]">{children}</div></main> }
 function Sheet({ title, close, children }: { title: string; close: () => void; children: ReactNode }) { return <div className="fixed inset-0 z-50 flex items-end bg-black/60" onMouseDown={e => e.target === e.currentTarget && close()}><div role="dialog" aria-modal="true" aria-label={title} className="mx-auto max-h-[85dvh] w-full max-w-[540px] overflow-hidden rounded-t-[28px] bg-[#151515] text-white"><header className="flex h-16 items-center justify-between border-b border-white/10 px-5"><h2 className="font-black">{title}</h2><button onClick={close} className="h-11 px-3 font-bold">Close</button></header>{children}</div></div> }
 function Circle({ label, icon, click, badge }: { label: string; icon: IconName; click: () => void; badge?: boolean }) { return <button onClick={click} aria-label={label} className="relative grid h-11 w-11 place-items-center rounded-full border border-white/20 bg-black/35 backdrop-blur">{<Icon name={icon}/>} {badge && <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-lime ring-2 ring-black"/>}</button> }
-function Action({ icon, text, click, active }: { icon: IconName; text: string; click: () => void; active?: boolean }) { return <button onClick={click} aria-pressed={active} className={`flex min-h-14 min-w-14 flex-col items-center gap-1 text-xs font-bold ${active ? 'text-lime' : ''}`}><span className="grid h-10 w-10 place-items-center rounded-full bg-black/40"><Icon name={icon} fill={active}/></span>{text}</button> }
+function Action({ icon, text, click, active }: { icon: IconName; text: string; click: () => void; active?: boolean }) { return <button onClick={click} aria-pressed={active} className={`flex min-h-14 min-w-14 flex-col items-center gap-1 text-xs font-bold ${active ? 'text-lime' : 'text-white'}`}><span className="grid h-10 w-10 place-items-center rounded-full bg-black/40"><Icon name={icon} fill={active}/></span>{text}</button> }
 function PlaceholderPanel({ title, body, action }: { title: string; body: string; action?: () => void }) { return <section className="mx-auto grid h-[100dvh] max-w-[540px] snap-start place-items-center bg-[radial-gradient(circle_at_50%_40%,#292929,#090909_70%)] px-8 text-center"><div><span className="mx-auto grid h-20 w-20 place-items-center rounded-full bg-white/5 text-white/30"><Icon name="video" size={36}/></span><h2 className="mt-6 text-2xl font-black">{title}</h2><p className="mt-3 text-sm leading-6 text-white/50">{body}</p>{action && <button onClick={action} className="mt-6 h-12 rounded-full bg-lime px-6 font-bold text-black">Post a clip</button>}</div></section> }
 function AdPlaceholder({ size }: { size?: 'native' | '300x250' }) {
   if (size === '300x250') {
