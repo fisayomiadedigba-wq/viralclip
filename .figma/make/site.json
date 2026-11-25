@@ -1,0 +1,10 @@
+{
+  "description": "A TikTok-style video app for discovering and sharing short clips, with threaded comments, likes, saves, notifications, and creator profiles.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
