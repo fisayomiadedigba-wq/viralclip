@@ -169,8 +169,13 @@ export default function App() {
     }
   }
   const removeClip = async (clip: Clip) => {
-    if (db && clip.ownerId === user?.uid) await deleteDoc(doc(db, 'clips', clip.id))
-    setClips(v => v.filter(c => c.id !== clip.id)); setToast('Clip deleted.')
+    if (db && clip.ownerId === user?.uid) {
+      await deleteDoc(doc(db, 'clips', clip.id))
+      setClips(v => v.filter(c => c.id !== clip.id))
+      setToast('Clip deleted.')
+    } else {
+      setToast('You can only delete your own clips.')
+    }
   }
   const submitReport = async (reason: string) => {
     if (db && reportClip) await addDoc(collection(db, 'reports'), { clipId: reportClip.id, ownerId: reportClip.ownerId, creatorName: reportClip.creator.name, reason, status: 'open', reporterId: user?.uid, createdAt: serverTimestamp() })
@@ -178,8 +183,8 @@ export default function App() {
   }
   const submitComment = async (e: FormEvent) => {
     e.preventDefault(); if (!comment.trim() || !commentsClip) return
-    const row = { id: crypto.randomUUID(), text: comment.trim(), user: currentUserData?.name || 'You', userId: user?.uid, parentId: reply ?? undefined }
-    setComments(v => [...v, row]); setComment(''); setReply(null)
+    const row = { text: comment.trim(), user: currentUserData?.name || 'You', userId: user?.uid, parentId: reply ?? undefined }
+    setComment(''); setReply(null)
     if (db) {
       await addDoc(collection(db, 'clips', commentsClip.id, 'comments'), { ...row, createdAt: serverTimestamp() })
       await updateDoc(doc(db, 'clips', commentsClip.id), { comments: increment(1) })
@@ -286,7 +291,7 @@ export default function App() {
 }
 
 function FeedClip({ clip, liked, saved, followed, onCreator, onFollow, onLike, onSave, onComments, onReport }: { clip: Clip; liked: boolean; saved: boolean; followed: boolean; onCreator: () => void; onFollow: () => void; onLike: () => void; onSave: () => void; onComments: () => void; onReport: () => void }) {
-  return <section className="relative mx-auto h-[100dvh] max-w-[540px] snap-start overflow-hidden bg-[#151515]">{clip.videoUrl ? <video src={clip.videoUrl} poster={clip.posterUrl} className="h-full w-full object-cover" loop muted playsInline controls/> : <div className="grid h-full place-items-center bg-[radial-gradient(circle_at_50%_35%,#333,#111_65%)]"><div className="text-center text-white/30"><Icon name="video" size={52}/><p className="mt-3 text-sm font-bold">Video placeholder</p></div></div>}<div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/85"/><div className="absolute bottom-6 left-5 right-24"><div className="mb-3 flex items-center gap-3"><button onClick={onCreator} className="grid h-11 w-11 place-items-center rounded-full bg-lime font-black text-black">{clip.creator.name.slice(0,2).toUpperCase()}</button><button onClick={onCreator} className="min-h-11 text-left"><b className="block">@{clip.creator.username}</b><span className="text-xs text-white/65">{clip.creator.name}</span></button><button onClick={onFollow} className="h-10 rounded-full border border-white/70 px-4 text-sm font-bold">{followed ? 'Following' : 'Follow'}</button></div><p className="text-[15px] leading-6">{clip.caption || 'Add a caption to your clip.'}</p></div><aside className="absolute bottom-6 right-3 flex flex-col items-center gap-2"><Action icon="heart" text={compact(clip.likes + (liked ? 1 : 0))} active={liked} click={onLike}/><Action icon="comment" text={compact(clip.comments)} click={onComments}/><Action icon="share" text="Share" click={() => navigator.share?.({ title: 'CLIPS', url: location.href })}/><Action icon="flag" text="Report" click={onReport}/></aside></section>
+  return <section className="relative mx-auto h-[100dvh] max-w-[540px] snap-start overflow-hidden bg-[#151515]">{clip.videoUrl ? <video src={clip.videoUrl} poster={clip.posterUrl} className="h-full w-full object-cover" loop muted playsInline autoPlay/> : <div className="grid h-full place-items-center bg-[radial-gradient(circle_at_50%_35%,#333,#111_65%)]"><div className="text-center text-white/30"><Icon name="video" size={52}/><p className="mt-3 text-sm font-bold">Video placeholder</p></div></div>}<div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/30 via-transparent to-black/85"/><div className="absolute bottom-6 left-5 right-24"><div className="mb-3 flex items-center gap-3"><button onClick={onCreator} className="grid h-11 w-11 place-items-center rounded-full bg-lime font-black text-black">{clip.creator.name.slice(0,2).toUpperCase()}</button><button onClick={onCreator} className="min-h-11 text-left"><b className="block">@{clip.creator.username}</b><span className="text-xs text-white/65">{clip.creator.name}</span></button><button onClick={onFollow} className="h-10 rounded-full border border-white/70 px-4 text-sm font-bold">{followed ? 'Following' : 'Follow'}</button></div><p className="text-[15px] leading-6">{clip.caption || 'Add a caption to your clip.'}</p></div><aside className="absolute bottom-6 right-3 flex flex-col items-center gap-2"><Action icon="heart" text={compact(clip.likes)} active={liked} click={onLike}/><Action icon="comment" text={compact(clip.comments)} click={onComments}/><Action icon="share" text="Share" click={() => navigator.share?.({ title: 'CLIPS', url: location.href })}/><Action icon="flag" text="Report" click={onReport}/></aside></section>
 }
 
 function CreatorProfile({ creator, clips, own, following, onFollow, onOpen, onDelete, onEdit }: { creator: Creator; clips: Clip[]; own: boolean; following: boolean; onFollow: () => void; onOpen: (c: Clip) => void; onDelete: (c: Clip) => void; onEdit?: () => void }) {
@@ -298,14 +303,15 @@ function Notifications({ notices, openCreator }: { notices: Notice[]; openCreato
 }
 
 function Upload({ user, onDone, userData }: { user: User; onDone: () => void; userData: Creator | null }) {
-  const [file, setFile] = useState<File | null>(null), [caption, setCaption] = useState(''), [error, setError] = useState(''), [progress, setProgress] = useState(0)
+  const [file, setFile] = useState<File | null>(null), [caption, setCaption] = useState(''), [error, setError] = useState(''), [progress, setProgress] = useState(0), [uploading, setUploading] = useState(false)
   const choose = (e: ChangeEvent<HTMLInputElement>) => { const f = e.target.files?.[0]; if (!f) return; const url = URL.createObjectURL(f), v = document.createElement('video'); v.onloadedmetadata = () => { URL.revokeObjectURL(url); if (v.duration < 5 || v.duration > 60) setError('Choose a video between 5 and 60 seconds.'); else { setFile(f); setError('') } }; v.src = url }
   const post = async () => {
-    if (!file || !db) { setError('Add your Firebase environment values and enable Firestore first.'); return }
+    if (!file || !db || uploading) { setError('Add your Firebase environment values and enable Firestore first.'); return }
     const cloudName = import.meta.env.VITE_PUBLIC_CLOUDINARY_CLOUD_NAME
     const uploadPreset = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET
     if (!cloudName || !uploadPreset) { setError('Add Cloudinary cloud name and upload preset to .env'); return }
 
+    setUploading(true)
     setProgress(10)
     const formData = new FormData()
     formData.append('file', file)
@@ -339,13 +345,17 @@ function Upload({ user, onDone, userData }: { user: User; onDone: () => void; us
       })
       await updateDoc(doc(db, 'users', user.uid), { posts: increment(1) })
       setProgress(100)
+      setFile(null)
+      setCaption('')
+      setUploading(false)
       onDone()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Upload failed')
       setProgress(0)
+      setUploading(false)
     }
   }
-  return <div className="p-5"><label className="flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-[28px] border-2 border-dashed border-black/20 bg-white text-center"><input type="file" accept="video/*" onChange={choose} className="sr-only"/><span className="grid h-16 w-16 place-items-center rounded-full bg-lime"><Icon name="plus" size={30}/></span><b className="mt-4">{file?.name || 'Choose a video'}</b><span className="mt-2 text-sm text-black/50">5–60 seconds · vertical works best</span></label><textarea value={caption} onChange={e => setCaption(e.target.value)} placeholder="Write a caption…" className="mt-5 min-h-28 w-full rounded-2xl bg-white p-4 outline-none focus:ring-2 focus:ring-black"/>{error && <p role="alert" className="mt-3 rounded-xl bg-red-100 p-3 text-sm text-red-700">{error}</p>}{progress > 0 && <p className="mt-3 text-sm font-bold">Uploading {progress}%</p>}<button onClick={post} disabled={!file} className="mt-5 h-12 w-full rounded-full bg-black font-bold text-white disabled:opacity-30">Post clip</button></div>
+  return <div className="p-5"><label className="flex min-h-64 cursor-pointer flex-col items-center justify-center rounded-[28px] border-2 border-dashed border-black/20 bg-white text-center"><input type="file" accept="video/*" onChange={choose} className="sr-only" disabled={uploading}/><span className="grid h-16 w-16 place-items-center rounded-full bg-lime"><Icon name="plus" size={30}/></span><b className="mt-4">{file?.name || 'Choose a video'}</b><span className="mt-2 text-sm text-black/50">5–60 seconds · vertical works best</span></label><textarea value={caption} onChange={e => setCaption(e.target.value)} placeholder="Write a caption…" className="mt-5 min-h-28 w-full rounded-2xl bg-white p-4 outline-none focus:ring-2 focus:ring-black" disabled={uploading}/>{error && <p role="alert" className="mt-3 rounded-xl bg-red-100 p-3 text-sm text-red-700">{error}</p>}{progress > 0 && <p className="mt-3 text-sm font-bold">Uploading {progress}%</p>}<button onClick={post} disabled={!file || uploading} className="mt-5 h-12 w-full rounded-full bg-black font-bold text-white disabled:opacity-30">{uploading ? 'Uploading...' : 'Post clip'}</button></div>
 }
 
 function Admin({ clips, reports, notices, toast }: { clips: Clip[]; reports: Report[]; notices: Notice[]; toast: (s: string) => void }) {
