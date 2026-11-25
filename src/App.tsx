@@ -90,6 +90,19 @@ export default function App() {
   }, [page])
 
   useEffect(() => {
+    const handlePopState = () => {
+      const path = window.location.pathname
+      if (path === '/admin') {
+        setPage('admin')
+      } else if (path === '/') {
+        setPage('feed')
+      }
+    }
+    window.addEventListener('popstate', handlePopState)
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [])
+
+  useEffect(() => {
     if (!db) { setLoading(false); return }
     const stopClips = onSnapshot(query(collection(db, 'clips'), orderBy('createdAt', 'desc'), limit(60)), snap => {
       setClips(snap.docs.map(d => ({ id: d.id, ...d.data() } as Clip))); setLoading(false)
@@ -165,18 +178,19 @@ export default function App() {
   }
   const submitComment = async (e: FormEvent) => {
     e.preventDefault(); if (!comment.trim() || !commentsClip) return
-    const row = { id: crypto.randomUUID(), text: comment.trim(), user: 'You', parentId: reply ?? undefined }
+    const row = { id: crypto.randomUUID(), text: comment.trim(), user: currentUserData?.name || 'You', userId: user?.uid, parentId: reply ?? undefined }
     setComments(v => [...v, row]); setComment(''); setReply(null)
     if (db) {
-      await addDoc(collection(db, 'clips', commentsClip.id, 'comments'), { ...row, userId: user?.uid, createdAt: serverTimestamp() })
+      await addDoc(collection(db, 'clips', commentsClip.id, 'comments'), { ...row, createdAt: serverTimestamp() })
       await updateDoc(doc(db, 'clips', commentsClip.id), { comments: increment(1) })
     }
   }
 
   useEffect(() => {
     if (!db || !commentsClip) return
-    const stop = onSnapshot(collection(db, 'clips', commentsClip.id, 'comments'), orderBy('createdAt', 'asc'), snap => {
-      setComments(snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; text: string; user: string; parentId?: string })))
+    const stop = onSnapshot(query(collection(db, 'clips', commentsClip.id, 'comments'), orderBy('createdAt', 'asc')), snap => {
+      const commentsData = snap.docs.map(d => ({ id: d.id, ...d.data() } as { id: string; text: string; user: string; parentId?: string }))
+      setComments(commentsData)
     })
     return stop
   }, [db, commentsClip])
@@ -246,7 +260,7 @@ export default function App() {
   if (page === 'contact') return <Shell title="Contact Us" back={() => setPage('settings')}><Contact/></Shell>
   if (page === 'settings') {
     if (!user) { setPage('signin'); return null }
-    return <Shell title="Settings" back={() => setPage('me')}><div className="space-y-6 p-5"><Section title="Account"><Row icon="bell" text="Notifications" onClick={() => setPage('notifications')}/><Row icon="user" text="Edit profile" onClick={() => setPage('edit-profile')}/></Section><Section title="Legal"><Row icon="user" text="Terms of Service" onClick={() => setPage('terms')}/><Row icon="user" text="Privacy Policy" onClick={() => setPage('privacy')}/><Row icon="user" text="About" onClick={() => setPage('about')}/><Row icon="user" text="Contact Us" onClick={() => setPage('contact')}/></Section><Section title="Danger Zone"><Row icon="trash" text="Delete account" onClick={deleteAccount}/><Row icon="back" text="Sign out" onClick={async () => { await signOut(auth!); setPage('signin') }}/></Section></div></Shell>
+    return <Shell title="Settings" back={() => setPage('me')}><div className="space-y-6 p-5"><Section title="Account"><Row icon="bell" text="Notifications" onClick={() => setPage('notifications')}/><Row icon="user" text="Edit profile" onClick={() => setPage('edit-profile')}/></Section><Section title="Legal"><Row icon="user" text="Terms of Service" onClick={() => setPage('terms')}/><Row icon="user" text="Privacy Policy" onClick={() => setPage('privacy')}/><Row icon="user" text="About" onClick={() => setPage('about')}/><Row icon="user" text="Contact Us" onClick={() => setPage('contact')}/></Section><Section title="Admin"><Row icon="shield" text="Admin Studio" onClick={openAdmin}/></Section><Section title="Danger Zone"><Row icon="trash" text="Delete account" onClick={deleteAccount}/><Row icon="back" text="Sign out" onClick={async () => { await signOut(auth!); setPage('signin') }}/></Section></div></Shell>
   }
   if (page === 'edit-profile') {
     if (!user) { setPage('signin'); return null }
